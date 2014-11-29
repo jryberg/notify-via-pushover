@@ -64,7 +64,7 @@ cat - <<EOF
 Usage: ${APPNAME} [--help]
 Usage: ${APPNAME} [-c 'full path' ] [-s 'sound'] -m 'message'
 
-This program sends notification via Pushover multiplattform messaging service
+This program sends notification via Pushover multi-platform messaging service
 
 It is initially written as a plugin for Naemon / Nagios / op5 but since it
 very customisable it should be very easy to use as a complete toolbox for
