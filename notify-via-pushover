@@ -1,0 +1,414 @@
+#!/usr/bin/env bash
+#
+# License: The BSD 3-Clause License
+#
+# Copyright (c) 2014, Johan Ryberg
+# All rights reserved.
+# 
+# Redistribution and use in source and binary forms, with or without 
+# modification, are permitted provided that the following conditions are met:
+# 
+# * Redistributions of source code must retain the above copyright notice, 
+#  this list of conditions and the following disclaimer.
+# 
+# * Redistributions in binary form must reproduce the above copyright notice,
+#  this list of conditions and the following disclaimer in the documentation
+#  and/or other materials provided with the distribution.
+# 
+# * Neither the name of the copyright holder nor the names of its contributors
+#  may be used to endorse or promote products derived from this software without
+#  specific prior written permission.
+# 
+# THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+#  AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE 
+#  IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
+#  ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE
+#  LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR 
+#  CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
+#  SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
+#  INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
+#  CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
+#  ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
+#  POSSIBILITY OF SUCH DAMAGE.
+#
+# notify-via-pushover
+# This program sends notification via Pushover multi-platform messaging service
+#
+# It is initially written as a plugin for Naemon / Nagios / op5 but since it
+# very customisable it should be very easy to use as a complete toolbox for
+# Pushover service
+# 
+# Web: https://github.com/jryberg/notify-via-pushover
+#
+# Changelog
+# 1.0 (2014-11-28)
+#   Initial version
+#
+# Ideas regarding config file parsing comes from "Sirat" in thread http://wiki.bash-hackers.org/howto/conffile
+
+# Variable declaration
+APPNAME=`basename $0`
+VERSION="1.0"
+VERBOSE=''
+GET=''
+COMMAND=''
+CONFIG_FILE='/etc/notify-via-pushover.conf'
+API_URL='https://api.pushover.net/1/messages.json'
+
+# Commented lines, empty lines und lines of the from choose_ANYNAME='any.:Value' are valid
+CONFIG_SYNTAX="^\s*#|^\s*$|^[a-zA-Z_]+='[^']*'$"
+
+# Function to explain how to use the program
+function_usage () {
+cat - <<EOF
+Usage: ${APPNAME} [--help]
+Usage: ${APPNAME} [-c 'full path' ] [-s 'sound'] -m 'message'
+
+This program sends notification via Pushover multiplattform messaging service
+
+It is initially written as a plugin for Naemon / Nagios / op5 but since it
+very customisable it should be very easy to use as a complete toolbox for
+Pushover service
+
+ --help
+    Show this help
+ -V, --version
+    Show version
+ -v, --verbose
+    Show compiled list of settings
+ -c, --config
+    Full path to configuration file. Default: /etc/notify-via-pushover.conf
+ -d, --device
+    Device name or group to recieve notifications. Default: <empty> (all devices)
+ -a, --application-token
+    Application token
+ -i, --user-id
+    User identifier
+ -u, --url
+    Add a url to the notification
+ -t, --title
+    Notification title
+ -r, --url-title
+    URL title
+ -m, --message
+    Message to be sent as a notification. \n are handled as newline
+ -p, --priority
+    Priorities:
+      -2 - Lowest Priority
+      -1 - Low Priority
+       0 - Normal Prioroty
+       1 - High Priority
+       2 - Emergency Priority 
+ -s, --sound
+    Notification sound:
+      pushover - Pushover (default)
+      bike - Bike
+      bugle - Bugle
+      cashregister - Cash Register
+      classical - Classical
+      cosmic - Cosmic
+      falling - Falling
+      gamelan - Gamelan
+      incoming - Incoming
+      intermission - Intermission
+      magic - Magic
+      mechanical - Mechanical
+      pianobar - Piano Bar
+      siren - Siren
+      spacealarm - Space Alarm
+      tugboat - Tug Boat
+      alien - Alien Alarm (long)
+      climb - Climb (long)
+      persistent - Persistent (long)
+      echo - Pushover Echo (long)
+      updown - Up Down (long)
+      none - None (silent) 
+
+Example:
+${APPNAME} -m 'Hello world'
+${APPNAME} --sound 'alien' --title 'Aliens' --url 'http://www.imdb.com/title/tt0090605/' --url-title 'Aliens (1986)' --message 'Aliens, one of the best movies ever'
+
+EOF
+}
+
+# Check if we have curl or wget
+if command -v curl >/dev/null 2>&1; then
+  GET="curl" 
+elif command -v wget >/dev/null 2>&1; then
+  GET="wget"
+else
+  echo "Can't find curl or wget, aborting..."
+  exit 72
+fi
+
+# Process arguments
+while [ $# -gt 0 ]
+  do
+    OPT="$1"
+    case "${OPT}" in
+      --help)
+        function_usage
+        exit 0
+      ;;
+      -s|--sound)
+        shift
+        T_SOUND="${1}" 
+        shift
+      ;;
+      -m|--message)
+        shift
+        MESSAGE="${1}"
+        shift
+      ;;
+      -c|--config)
+        shift
+        T_CONFIG_FILE="${1}" 
+        shift 
+      ;;
+      -d|--device)
+        shift
+        T_DEVICE="${1}"
+        shift
+      ;;
+      --version|-V)
+        echo "${APPNAME} ${VERSION}"
+        exit 0
+      ;;
+      --verbose|-v)
+        shift
+        VERBOSE=1
+      ;;
+      -u|--url)
+        shift
+        T_URL="${1}"
+        shift             
+      ;;
+      -t|--title)
+        shift
+        T_TITLE="${1}"
+        shift             
+      ;;
+      -p|--priority)
+        shift
+        T_PRIORITY="${1}"
+        shift             
+      ;;
+      -r|--url-title)
+        shift
+        T_URL_TITLE="${1}"
+        shift             
+      ;;
+      -i|--user-id)
+        shift
+        T_USER="${1}"
+        shift             
+      ;;
+      -a|--application-token)
+        shift
+        T_TOKEN="${1}"
+        shift             
+      ;;
+      *)
+        echo "${APPNAME}: invalid option '${1}'"
+        echo "Try '${APPNAME} --help' for more information."
+        function_usage
+        exit 64
+      ;;
+    esac
+done
+
+# Should we use config file from argument
+if [ "${T_CONFIG_FILE}" ]; then
+  CONFIG_FILE="${T_CONFIG_FILE}"
+fi
+
+# Check if config file is aviable, not required
+if [ -f "${CONFIG_FILE}" ]; then
+  # check if the file contains something we don't want
+  if egrep -q -v "${CONFIG_SYNTAX}" "$CONFIG_FILE"; then
+    echo "Error parsing config file ${CONFIG_FILE}." >&2
+    echo "The following lines in the configfile do not fit the syntax:" >&2
+    egrep -vn "${CONFIG_SYNTAX}" "$CONFIG_FILE"
+    exit 78
+  fi
+
+  # otherwise go on and source it:
+  source "${CONFIG_FILE}"
+fi
+
+# Now override with given arguments
+if [ "${T_TOKEN}" ]; then
+  TOKEN="${T_TOKEN}"
+fi
+if [ "${T_USER}" ]; then
+  USER="${T_USER}"
+fi
+if [ "${T_DEVICE}" ]; then
+  DEVICE="${T_DEVICE}"
+fi
+if [ "${T_URL}" ]; then
+  URL="${T_URL}"
+fi
+if [ "${T_URL_TITLE}" ]; then
+  URL_TITLE="${T_URL_TITLE}"
+fi
+if [ "${T_TITLE}" ]; then
+  TITLE="${T_TITLE}"
+fi
+if [ "${T_PRIORITY}" ]; then
+  PRIORITY="${T_PRIORITY}"
+fi
+if [ "${T_SOUND}" ]; then
+  SOUND="${T_SOUND}"
+fi
+if [ "${T_DEVICE}" ]; then
+  DEVICE="${T_DEVICE}"
+fi
+
+# Make sure we have token, user and message
+if ! [ "${TOKEN}" ]; then
+  echo "Application token is missing, aborting..."
+  echo
+  function_usage
+  exit 78
+fi
+
+if ! [ "${USER}" ]; then
+  echo "User identifier is missing, aborting..."
+  echo
+  function_usage
+  exit 78
+fi
+
+if ! [ "${MESSAGE}" ]; then
+  echo "Message is missing, aborting..."
+  echo
+  function_usage
+  exit 78
+fi
+
+# Make sure we don't violate the protocol
+if [ "${#MESSAGE}" -gt "1024" ]; then
+  echo "Message must not be longer than 1024 characters, aborting..."
+  exit 65
+fi
+
+if [ "${#TITLE}" -gt "250" ]; then
+  echo "Title must not be longer than 250 characters, aborting..."
+  exit 65
+fi
+
+if [ "${#URL}" -gt "512" ]; then
+  echo "URL must not be longer than 512 characters, aborting..."
+  exit 65
+fi
+
+if [ "${#URL_TITLE}" -gt "100" ]; then
+  echo "URL title must not be longer than 100 characters, aborting..."
+  exit 65
+fi
+
+# Replace \n with newline. Feedback are welcome how to do this without temp file
+TFILE="/tmp/$(basename $0).$$.tmp"
+printf "%b" "${MESSAGE}" > $TFILE 
+
+# If verbose, compile what we are going to send
+if [ ${VERBOSE} ]; then 
+  echo "Notification to be sent:"
+  echo " config file: ${CONFIG_FILE}"
+  echo " user identifier: ${USER}"
+  echo " application token: ${TOKEN}"
+  echo " title: ${TITLE}"
+  echo " message: ${MESSAGE}"
+  echo " priority: ${PRIORITY}"
+  echo " url: ${URL}"
+  echo " url title: ${URL_TITLE}"
+  echo " sound: ${SOUND}"
+  echo " to device: ${DEVICE}"
+fi
+
+# Compile the entire command
+if [[ "${GET}" == "curl" ]]; then
+  COMMAND='curl --silent'
+  COMMAND="${COMMAND} --form-string \"token=${TOKEN}\""
+  COMMAND="${COMMAND} --form-string \"user=${USER}\""
+  COMMAND="${COMMAND} --form-string \"message=`cat $TFILE`\""
+  rm -rf $TFILE
+
+  if [ "$DEVICE" ]; then
+    COMMAND="${COMMAND} --form-string \"device=${DEVICE}\""
+  fi
+
+  if [ "$TITLE" ]; then
+    COMMAND="${COMMAND} --form-string \"title=${TITLE}\""
+  fi
+
+  if [[ "$URL" != "" ]]; then
+    COMMAND="${COMMAND} --form-string \"url=${URL}\""
+  fi
+
+  if [[ "$URL_TITLE" != "" ]]; then
+    COMMAND="${COMMAND} --form-string \"url_title=${URL_TITLE}\""
+  fi
+
+  if [[ "$PRIORITY" != "" ]]; then
+    COMMAND="${COMMAND} --form-string \"priority=${PRIORITY}\""
+  fi
+
+  if [[ "$SOUND" != "" ]]; then
+    COMMAND="${COMMAND} --form-string \"sound=${SOUND}\""
+  fi
+
+  COMMAND="${COMMAND} ${API_URL}"
+else
+  COMMAND="wget --quiet --output-document=- --post-data=\""
+  COMMAND="${COMMAND}token=${TOKEN}"
+  COMMAND="${COMMAND}&user=${USER}"
+  COMMAND="${COMMAND}&message=`cat $TFILE`"
+  rm -rf $TFILE
+
+  if [[ "$DEVICE" != "" ]]; then
+    COMMAND="${COMMAND}&device=${DEVICE}"
+  fi
+
+  if [[ "$TITLE" != "" ]]; then
+    COMMAND="${COMMAND}&title=${TITLE}"
+  fi
+
+  if [[ "$URL" != "" ]]; then
+    COMMAND="${COMMAND}&url=${URL}"
+  fi
+
+  if [[ "$URL_TITLE" != "" ]]; then
+    COMMAND="${COMMAND}&url_title=${URL_TITLE}"
+  fi
+
+  if [[ "$PRIORITY" != "" ]]; then
+    COMMAND="${COMMAND}&priority=${PRIORITY}"
+  fi
+
+  if [[ "$SOUND" != "" ]]; then
+    COMMAND="${COMMAND}&sound=${SOUND}"
+  fi
+
+  COMMAND="${COMMAND}\" ${API_URL}"
+fi
+
+# Send it
+RESPONSE=`eval "$COMMAND"`
+STATUS=$?
+
+# Echo result
+if [ "${STATUS}" == "0" ]; then
+  echo ${RESPONSE}
+else
+  echo "Unexpected error code from ${GET}: ${STATUS}"
+  exit ${STATUS}
+fi
+
+# Check if the result was OK or failed and return exit value
+if [[ ${RESPONSE} == *status\":1* ]]; then
+  exit 0
+else
+  exit 76
+fi
