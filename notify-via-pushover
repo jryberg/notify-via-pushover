@@ -43,7 +43,10 @@
 # Changelog
 # 1.0 (2014-11-28)
 #   Initial version
-#
+# 1.1 (2015-05-30)
+#   Bugfix: Support Emergency priority
+#            Thanks goes to soakes@github for feedback and code
+# 
 # Ideas regarding config file parsing comes from "Sirat" in thread http://wiki.bash-hackers.org/howto/conffile
 
 # Variable declaration
@@ -99,6 +102,10 @@ Pushover service
        0 - Normal Prioroty
        1 - High Priority
        2 - Emergency Priority 
+ -e, --expire
+    The expire parameter specifies how many seconds your notification will continue to be retried for (every retry seconds). 
+ -y, --retry
+    The retry parameter specifies how often (in seconds) the Pushover servers will send the same notification to the user.
  -s, --sound
     Notification sound:
       pushover - Pushover (default)
@@ -193,6 +200,16 @@ while [ $# -gt 0 ]
         T_PRIORITY="${1}"
         shift             
       ;;
+      -e|--expire)
+        shift
+        T_EXPIRE="${1}"
+        shift             
+      ;;
+      -y|--retry)
+        shift
+        T_RETRY="${1}"
+        shift             
+      ;;
       -r|--url-title)
         shift
         T_URL_TITLE="${1}"
@@ -258,6 +275,12 @@ fi
 if [ "${T_PRIORITY}" ]; then
   PRIORITY="${T_PRIORITY}"
 fi
+if [ "${T_EXPIRE}" ]; then
+  EXPIRE="${T_EXPIRE}"
+fi
+if [ "${T_RETRY}" ]; then
+  RETRY="${T_RETRY}"
+fi
 if [ "${T_SOUND}" ]; then
   SOUND="${T_SOUND}"
 fi
@@ -308,6 +331,27 @@ if [ "${#URL_TITLE}" -gt "100" ]; then
   exit 65
 fi
 
+if ! [ "${RETRY}" == "" ]; then
+  if [ "${RETRY}" -lt "30" ]; then
+    echo "Retry must be 30 seconds or more, aborting..."
+    exit 65
+  fi
+fi
+
+if ! [ "${EXPIRE}" == "" ]; then
+  if [ "${EXPIRE}" -ge "86400" ]; then
+    echo "Expire must not be greater than 86400 seconds (24 hours), aborting..."
+    exit 65
+  fi
+fi
+
+if [ "${PRIORITY}" == "2" ]; then
+  if [ "${RETRY}" == "" ] || [ "${EXPIRE}" == "" ]; then 
+    echo "Priority 2 requires both expire and retry to be set, aborting..."
+    exit 65
+  fi
+fi
+
 # Replace \n with newline. Feedback are welcome how to do this without temp file
 TFILE="/tmp/$(basename $0).$$.tmp"
 printf "%b" "${MESSAGE}" > $TFILE 
@@ -321,6 +365,8 @@ if [ ${VERBOSE} ]; then
   echo " title: ${TITLE}"
   echo " message: ${MESSAGE}"
   echo " priority: ${PRIORITY}"
+  echo " expire: ${EXPIRE}"
+  echo " retry: ${RETRY}"
   echo " url: ${URL}"
   echo " url title: ${URL_TITLE}"
   echo " sound: ${SOUND}"
@@ -355,6 +401,14 @@ if [[ "${GET}" == "curl" ]]; then
     COMMAND="${COMMAND} --form-string \"priority=${PRIORITY}\""
   fi
 
+  if [[ "$EXPIRE" != "" ]]; then
+    COMMAND="${COMMAND} --form-string \"expire=${EXPIRE}\""
+  fi
+
+  if [[ "$RETRY" != "" ]]; then
+    COMMAND="${COMMAND} --form-string \"retry=${RETRY}\""
+  fi
+
   if [[ "$SOUND" != "" ]]; then
     COMMAND="${COMMAND} --form-string \"sound=${SOUND}\""
   fi
@@ -385,6 +439,14 @@ else
 
   if [[ "$PRIORITY" != "" ]]; then
     COMMAND="${COMMAND}&priority=${PRIORITY}"
+  fi
+
+  if [[ "$EXPIRE" != "" ]]; then
+    COMMAND="${COMMAND}&expire=${EXPIRE}"
+  fi
+
+  if [[ "$RETRY" != "" ]]; then
+    COMMAND="${COMMAND}&retry=${RETRY}"
   fi
 
   if [[ "$SOUND" != "" ]]; then
